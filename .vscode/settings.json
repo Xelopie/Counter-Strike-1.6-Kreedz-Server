@@ -1,0 +1,5 @@
+{
+    "amxxpawn.compiler.includePaths": [
+        "${workspaceRoot}/cstrike/addons/amxmodx/scripting/include",
+    ]
+}
