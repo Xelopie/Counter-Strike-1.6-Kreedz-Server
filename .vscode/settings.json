@@ -1,5 +1,8 @@
 {
     "amxxpawn.compiler.includePaths": [
         "${workspaceRoot}/cstrike/addons/amxmodx/scripting/include",
-    ]
+    ],
+    "amxxpawn.compiler.outputPath": "${workspaceRoot}/cstrike/addons/amxmodx/plugins",
+    "amxxpawn.compiler.outputType": "path",
+    "amxxpawn.compiler.executablePath": "${workspaceRoot}/cstrike/addons/amxmodx/scripting/amxxpc.exe"
 }
