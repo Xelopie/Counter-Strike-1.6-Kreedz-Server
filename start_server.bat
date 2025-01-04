@@ -1,0 +1,1 @@
+start hlds.exe -game cstrike +ip 0.0.0.0 -port 27000 -console +sv_lan 0 +map bkz_goldbhop
