@@ -1,28 +1,3 @@
-/*
-*	Функционал:
-*	1) Игрок открывает меню состязаний с помощью команды '/cups'
-*	2) Меню выглядит так:
-*		- Список лобби
-*		- Создать лобби
-*		- Приглашения
-*	3) В списке лобби находятся только открытые лобби. 
-		Отображается хост, кол-во игроков и статус
-*	4) В меню создания лобби есть следующие настройки:
-*		- Чекпоинты (вкл/выкл)
-*		- Тип лобби (открытое/закрытое)
-*		- Количество игроков
-*		- Пригласить игроков
-*		- Исключить игроков
-*		- Начать состязание / Прекратить состязание
-*	5) Пригласить можно только игроков, которые не участвуют в состязании
-* 	6) Начать состязание может хост с помощью команды '/cup st'
-* 	7) Прекратить состязание может хост с помощью команды '/cup end'
-*	8) При старте состязания оно начинается через 10-с таймера, 
-*		после чего игроки телепортируются на старт и не могут использовать pause, hook и noclip.
-*	9) Игрок может выйти из состязания с помощью команды '/leave'
-*	10) Если все игроки, кроме 1 вышли из состязания, то оно автоматически заканчивается.
-*/
-
 #include <amxmodx>
 #include <fun>
 #include <reapi>
@@ -53,9 +28,15 @@ enum (+=500)
 
 enum CupState
 {
+	// No lobby
 	State_Inactive,
+	// Lobby created, no other players
 	State_Pending,
+	// Lobby created, ready to start
 	State_Waiting,
+	// Players are frozen, timer from 10 to 0
+	State_Timer,
+	// Lobby started
 	State_Started,
 }
 
@@ -148,12 +129,7 @@ public kz_spectator_pre(id)
 	return has_active_cup(id) ? KZ_SUPERCEDE : KZ_CONTINUE;
 }
 
-public kz_hookdetect_pre(id)
-{
-	return has_active_cup(id) ? KZ_SUPERCEDE : KZ_CONTINUE;
-}
-
-public kz_startrun_pre(id)
+public kz_timer_start_pre(id)
 {
 	return has_active_cup(id) ? KZ_SUPERCEDE : KZ_CONTINUE;
 }
@@ -174,14 +150,14 @@ public native_is_cp_allow(iLobby)
 	return g_Cups[iLobby][cup_IsCPAllow];
 }
 
-public kz_timer_finished(id, Float:flTime)
+public kz_timer_finish_post(id, runInfo[RunStruct])
 {
 	if (!has_active_cup(id))
 		return;
 
 	new iLobby = get_lobby(id);
 
-	g_Cups[iLobby][cup_Time][id] = flTime;
+	g_Cups[iLobby][cup_Time][id] = runInfo[run_time];
 
 	new Float:bestTime;
 	new numFinished = 0;
@@ -203,10 +179,10 @@ public kz_timer_finished(id, Float:flTime)
 	new szName[MAX_NAME_LENGTH];
 	get_user_name(id, szName, charsmax(szName));
 
-	if ( flTime == bestTime)
+	if (runInfo[run_time] == bestTime)
 	{
 		new szTime[64];
-		UTIL_FormatTime(flTime, szTime, charsmax(szTime), true);
+		UTIL_FormatTime(runInfo[run_time], szTime, charsmax(szTime), true);
 
 		client_print_color(0, print_team_default, "%L", LANG_PLAYER, "CUPS_CHAT_WON", szName, szTime);
 
@@ -222,10 +198,10 @@ public kz_timer_finished(id, Float:flTime)
 	}
 	else
 	{
-		new Float:diff = flTime - bestTime;
+		new Float:diff = runInfo[run_time] - bestTime;
 
 		new szTime[64], szDiff[64];
-		UTIL_FormatTime(flTime, szTime, charsmax(szTime), true);
+		UTIL_FormatTime(runInfo[run_time], szTime, charsmax(szTime), true);
 		UTIL_FormatTime(diff, szDiff, charsmax(szDiff), true);
 
 		client_print_color(0, print_team_red, "%L", LANG_PLAYER, "CUPS_CHAT_FINISHED", szName, szTime, szDiff);
@@ -259,6 +235,9 @@ public cmd_Version(id)
 
 public cmd_MainMenu(id)
 {
+	if (!is_user_connected(id))
+		return PLUGIN_HANDLED;
+
 	new szMsg[512];
 	formatex(szMsg, charsmax(szMsg), "%L", id, "CUPS_MAIN_TITLE");
 	
@@ -385,6 +364,9 @@ public LobbyList_Handler(id, menu, item)
 
 public cmd_Lobby(id, iLobby)
 {
+	if (!is_user_connected(id))
+		return PLUGIN_HANDLED;
+
 	g_CurrentLobby[id] = iLobby;
 	new bool:isHost = (id == iLobby);
 
@@ -604,7 +586,7 @@ public LobbyMenu_Handler(id, menu, item)
 				if (g_Cups[iLobby][cup_State] != State_Started)
 				{
 					// Start match logic
-					if (get_num_players_in_lobby(iLobby) > 1)
+					if (CanStartLobby(iLobby))
 					{
 						PreStartLobby(iLobby);
 						return PLUGIN_HANDLED;
@@ -650,7 +632,7 @@ public LobbyMenu_Handler(id, menu, item)
 					cmd_Leave(id);
 				else
 				{
-					if (	!is_lobby_full(iLobby) &&
+					if (!is_lobby_full(iLobby) &&
 						(!g_Cups[iLobby][cup_IsLocked] || is_invite_valid(id, iLobby)))
 					{
 						cmd_Join(id, iLobby);
@@ -868,8 +850,11 @@ public Invites_Handler(id, menu, item)
 
 public cmd_CupStart(id)
 {
-	if (g_Cups[id][cup_State] == State_Waiting)
-		PreStartLobby(id);
+	if (g_Cups[id][cup_State] == State_Waiting) {
+		if (CanStartLobby(id)) {
+			PreStartLobby(id);
+		}
+	}
 
 	return PLUGIN_HANDLED;
 }
@@ -919,7 +904,7 @@ bool:has_active_cup(id)
 {
 	for (new i; i <= MAX_PLAYERS; ++i)
 	{
-		if ( g_Cups[i][cup_State] == State_Started &&
+		if (g_Cups[i][cup_State] == State_Started &&
 			g_Cups[i][cup_Players][id] && !g_Cups[i][cup_Time][id])
 			return true;
 	}
@@ -1070,7 +1055,7 @@ get_num_valid_lobbies()
 
 	for (new i; i <= MAX_PLAYERS; ++i)
 	{
-		if (	g_Cups[i][cup_State] != State_Inactive &&
+		if (g_Cups[i][cup_State] != State_Inactive &&
 			g_Cups[i][cup_State] != State_Pending)
 			numLobbies++;
 	}
@@ -1142,11 +1127,23 @@ public cmd_Leave(id)
 	return PLUGIN_HANDLED;
 }
 
+bool:CanStartLobby(host) {
+	if (!is_user_connected(host)) 
+		return false;
+
+	if (get_num_players_in_lobby(host) < 2)
+		return false;
+	
+	if (!kz_has_start_pos(host)) {
+		client_print_color(host, print_team_default, "%L", host, "CUPS_CHAT_NO_START_POS");
+		return false;
+	}
+
+	return true;
+}
+
 PreStartLobby(iLobby)
 {
-	if (get_num_players_in_lobby(iLobby) < 2)
-		return;
-
 	if (get_member(iLobby, m_iTeam) == CS_TEAM_SPECTATOR)
 		amxclient_cmd(iLobby, "spec");
 
@@ -1172,7 +1169,7 @@ PreStartLobby(iLobby)
 		}
 	}
 
-	g_Cups[iLobby][cup_State] = State_Started;
+	g_Cups[iLobby][cup_State] = State_Timer;
 
 	StartTimer(iLobby);
 }
@@ -1192,6 +1189,7 @@ public RemoveEffects(id)
 		set_entvar(id, var_flags, get_entvar(id, var_flags) | FL_DUCKING);
 		set_entvar(id, var_fuser2, 0.0);
 		set_entvar(id, var_flags, get_entvar(id, var_flags) & ~FL_FROZEN);
+		set_entvar(id, var_friction, 1.0);
 	}
 }
 
@@ -1199,7 +1197,7 @@ public Task_StartTimer(iLobby)
 {
 	iLobby -= TASK_START;
 
-	if (g_Cups[iLobby][cup_State] != State_Started)
+	if (g_Cups[iLobby][cup_State] != State_Timer)
 	{
 		for (new id; id <= MAX_PLAYERS; ++id)
 		{
@@ -1228,12 +1226,14 @@ public Task_StartTimer(iLobby)
 
 				RemoveEffects(id);
 				kz_start_timer(id);
-				// ne prokatit, peredelat'
-				// set_entvar(id, var_origin, vOrigin); 
 
-				remove_task(iLobby + 15000);
+				remove_task(TASK_START + iLobby);
 			}
 		}
+	}
+
+	if (g_Timer[iLobby] <= 0) {
+		g_Cups[iLobby][cup_State] = State_Started;
 	}
 
 	g_Timer[iLobby]--;

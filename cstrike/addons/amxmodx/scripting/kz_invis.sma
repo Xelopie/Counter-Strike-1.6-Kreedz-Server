@@ -107,6 +107,8 @@ public OnCellValueChanged(id, optionId, newValue) {
 // 
 
 public cmd_Invis(id) {
+	if (!is_user_connected(id)) return PLUGIN_HANDLED;
+	
 	new szMsg[256];
 	formatex(szMsg, charsmax(szMsg), "\y%L", id, "INVISMENU_TITLE");
 	
@@ -252,7 +254,7 @@ public OnStartSound(
 			// 	continue;
 			// }
 
-			rh_emit_sound2(entity, i, channel, sample, float(volume), attenuation, fFlags, pitch);
+			rh_emit_sound2(entity, i, channel, sample, volume / 255.0, attenuation, fFlags, pitch);
 		}
 		
 		return HC_SUPERCEDE;

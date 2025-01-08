@@ -7,6 +7,7 @@
 #include <reapi>
 
 #include <kreedz_api>
+#include <kreedz_sql>
 #include <kreedz_util>
 #include <settings_api>
 
@@ -20,8 +21,10 @@
  *	------------------------------------------------------------------
  */
 
-#define MAX_CACHE			20
-#define TIMER_UPDATE		1.0
+#define MAX_CACHE						20
+#define TIMER_UPDATE					1.0
+#define MIN_TIME_BETWEEN_USE_CALLS		0.1
+#define HOOK_PROTECTION					2.0
 
 enum _:CheckpointStruct {
 	Float:cp_Pos[3],
@@ -94,6 +97,11 @@ enum OptionsEnum {
 
 new g_Options[OptionsEnum];
 
+enum CvarsEnum {
+	cvarBlockStartSpam,
+};
+
+new g_Cvars[CvarsEnum];
 
 new Float:g_Checks[MAX_PLAYERS + 1][MAX_CACHE][CheckpointStruct];
 new Float:g_PauseChecks[MAX_PLAYERS + 1][MAX_CACHE][CheckpointStruct];
@@ -121,6 +129,7 @@ public plugin_init() {
 	initTries();
 	initForwards();
 	initCommands();
+	initCvars();
 
 	bindOptions();
 
@@ -175,11 +184,20 @@ initCommands() {
 	kz_register_cmd("restart", 		"cmd_Start");
 	kz_register_cmd("stop",		 	"cmd_Stop");
 	kz_register_cmd("reset", 		"cmd_Stop");
+	kz_register_cmd("startpos", 	"cmd_StartPos");
+	kz_register_cmd("savestart", 	"cmd_StartPos");
+	kz_register_cmd("setstart", 	"cmd_StartPos");
 
 	kz_register_cmd("sunglasses", 	"cmd_Sunglasses");
 
 	register_clcmd("kz_version", 	"cmd_ShowVersion");
-	// register_clcmd("say /vars", "cmd_vars");
+}
+
+initCvars() {
+	// 	Start button can only be activated every 0.1s (prevent +use spam)
+	// 	0 - disabled
+	// 	1 - enabled (default)
+	bind_pcvar_num(create_cvar("kz_disable_scroll_start", "1"), g_Cvars[cvarBlockStartSpam]);
 }
 
 initTries() {
@@ -213,16 +231,6 @@ public OnCellValueChanged(id, optionId, newValue) {
 	}
 }
 
-public cmd_vars(id) {
-	client_print(id, print_console, "%d %d %d %d", 
-		get_entvar(id, var_iuser1), get_entvar(id, var_iuser2),
-		get_entvar(id, var_iuser3), get_entvar(id, var_iuser4));
-
-	client_print(id, print_console, "%.1f %.1f %.1f %.1f", 
-		get_entvar(id, var_fuser1), get_entvar(id, var_fuser2),
-		get_entvar(id, var_fuser3), get_entvar(id, var_fuser4));
-}
-
 /**
  *	------------------------------------------------------------------
  * 	Natives section
@@ -233,6 +241,7 @@ public plugin_natives()
 {
 	register_native("kz_get_timer_state", 	"native_get_timer_state");
 	register_native("kz_start_timer", 		"native_start_timer");
+	register_native("kz_end_timer", 		"native_end_timer");
 	register_native("kz_set_pause", 		"native_set_pause");
 
 	register_native("kz_tp_last_pos", 		"native_tp_last_pos");
@@ -254,12 +263,20 @@ public plugin_natives()
 
 	register_native("kz_get_actual_time", 	"native_get_actual_time");
 	register_native("kz_set_start_time", 	"native_set_start_time");
+
+	register_native("kz_has_start_pos", 	"native_has_start_pos");
 }
 
 public native_start_timer() {
 	new id = get_param(1);
 
 	run_start(id);
+}
+
+public native_end_timer() {
+	new id = get_param(1);
+	
+	run_finish(id);
 }
 
 public native_get_cp_num() {
@@ -388,6 +405,12 @@ public native_set_start_time() {
 	g_UserData[id][ud_StartTime] = value;
 }
 
+public native_has_start_pos() {
+	new id = get_param(1);
+
+	return g_UserData[id][ud_IsStartSaved];
+}
+
 public native_set_pause() {
 	new id = get_param(1);
 
@@ -417,6 +440,7 @@ public native_tp_last_pos() {
 	set_entvar(id, var_view_ofs, Float:{0.0, 0.0, 12.0});
 	set_entvar(id, var_flags, get_entvar(id, var_flags) | FL_DUCKING);
 	set_entvar(id, var_fuser2, 0.0);
+	set_entvar(id, var_friction, 1.0);
 
 	if (g_UserData[id][ud_TimerState] == TIMER_PAUSED)
 		cmd_Fade(id);
@@ -546,6 +570,7 @@ public cmd_Gocheck(id) {
 	set_entvar(id, var_view_ofs, Float:{0.0, 0.0, 12.0});
 	set_entvar(id, var_flags, get_entvar(id, var_flags) | FL_DUCKING);
 	set_entvar(id, var_fuser2, 0.0);
+	set_entvar(id, var_friction, 1.0);
 
 	ExecuteForward(g_Forwards[fwd_TeleportPost], _, id);
 
@@ -591,6 +616,10 @@ public cmd_Start(id) {
 	if (iRet == KZ_SUPERCEDE) return PLUGIN_HANDLED;
 
 	if (g_UserData[id][ud_IsStartSaved]) {
+		if (kz_get_timer_state(id) == TIMER_ENABLED) {
+			kz_set_pause(id);
+		}
+
 		set_entvar(id, var_origin, g_UserData[id][ud_StartPos][cp_Pos]);
 
 		if (g_UserData[id][ud_AnglesMode] & (1 << 1)) {
@@ -603,6 +632,7 @@ public cmd_Start(id) {
 		set_entvar(id, var_view_ofs, Float:{0.0, 0.0, 12.0});
 		set_entvar(id, var_flags, get_entvar(id, var_flags) | FL_DUCKING);
 		set_entvar(id, var_fuser2, 0.0);
+		set_entvar(id, var_friction, 1.0);
 	} else {
 		ExecuteHamB(Ham_CS_RoundRespawn, id);
 	}
@@ -673,6 +703,25 @@ public cmd_Sunglasses(id) {
 	return PLUGIN_HANDLED; 
 }
 
+public cmd_StartPos(id) {
+	if (pev_valid(id) != 2) return PLUGIN_HANDLED;
+
+	new szMsg[256];
+
+	formatex(szMsg, charsmax(szMsg), "%L", id, "STARTPOSMENU_TITLE");
+	new menu = menu_create(szMsg, "@startPosMenuHandler");
+
+	formatex(szMsg, charsmax(szMsg), "%L", id, "STARTPOSMENU_SAVE");
+	menu_additem(menu, szMsg);
+
+	formatex(szMsg, charsmax(szMsg), "%L", id, "STARTPOSMENU_RESET");
+	menu_additem(menu, szMsg);
+
+	menu_display(id, menu);
+
+	return PLUGIN_HANDLED;
+}
+
 public cmd_DetectHook(id) {
 	if (is_user_alive(id) && g_UserData[id][ud_TimerState] == TIMER_ENABLED)
 		kz_set_pause(id);
@@ -693,6 +742,38 @@ public cmd_ShowVersion(id) {
 }
 
 
+@startPosMenuHandler(id, menu, item) {
+	menu_destroy(menu);
+
+	switch (item) {
+		case 0: {
+			if (!is_user_alive(id)) {
+				client_print_color(id, print_team_default, "%L", id, "KZ_CHAT_SET_START_POS_FAIL");
+				return PLUGIN_HANDLED;
+			}
+
+			new Float:vOrigin[3], Float:vAngle[3];
+			get_entvar(id, var_origin, vOrigin);
+			get_entvar(id, var_v_angle, vAngle);
+
+			setStartPosition(id, vOrigin, vAngle);
+			kz_sql_save_start_pos(id, vOrigin, vAngle);
+
+			client_print_color(id, print_team_default, "%L", id, "KZ_CHAT_SET_START_POS_SAVED");
+		}
+		case 1: {
+			g_UserData[id][ud_IsStartSaved] = false;
+			kz_sql_reset_start_pos(id);
+
+			client_print_color(id, print_team_default, "%L", id, "KZ_CHAT_SET_START_POS_RESETED");
+		}
+		default: return PLUGIN_HANDLED;
+	}
+
+	cmd_StartPos(id);
+
+	return PLUGIN_HANDLED;
+}
 
 /**
  *	------------------------------------------------------------------
@@ -722,6 +803,8 @@ public client_putinserver(id) {
 		g_UserData[id][ud_LastVel] = Float:{0.0, 0.0, 0.0};
 		g_UserData[id][ud_IsStartSaved] = false;
 
+		// Set default angles mode before settings are loaded
+		g_UserData[id][ud_AnglesMode] = 3;
 		g_UserData[id][ud_Sunglasses] = false;
 	}
 }
@@ -733,6 +816,14 @@ public client_disconnected(id) {
 	}
 }
 
+public kz_sql_start_pos_loaded(id, Float:vOrigin[3], Float:vAngle[3]) {
+	setStartPosition(id, vOrigin, vAngle);
+
+	if (g_UserData[id][ud_TimerState] != TIMER_DISABLED) return;
+
+	set_task(0.6, "cmd_Start", id);
+}
+
 public ham_Use(iEnt, id) {
 	if (!is_entity(iEnt) || !is_user_alive(id)) return HAM_IGNORED;
 
@@ -741,12 +832,6 @@ public ham_Use(iEnt, id) {
 
 	// Start button detected
 	if (TrieKeyExists(g_tStarts, szTarget)) {
-		if (g_UserData[id][ud_isHookEnable] || 
-			g_UserData[id][ud_HookProtection] > get_gametime() - 1.5 ||
-			get_user_noclip(id)) {
-			return HAM_IGNORED;
-		}
-
 		run_start(id);
 	}
 
@@ -845,6 +930,11 @@ HudDelBit(id, bit) {
 }
 
 run_start(id) {
+	if (g_UserData[id][ud_isHookEnable]) return;
+	if (g_UserData[id][ud_HookProtection] > get_gametime() - HOOK_PROTECTION) return;
+	if (get_user_noclip(id)) return;
+	if (shouldBlockStartButton(id)) return;
+
 	new iRet;
 	ExecuteForward(g_Forwards[fwd_TimerStartPre], iRet, id);
 
@@ -858,15 +948,15 @@ run_start(id) {
 	g_UserData[id][ud_AvailableStucks] = 0;
 	g_UserData[id][ud_TeleNum] = 0;
 
-	static Float:vPos[3], Float:vAngle[3];
+	if (!kz_has_start_pos(id)) {
+		static Float:vPos[3], Float:vAngle[3];
 
-	get_entvar(id, var_origin, vPos);
-	get_entvar(id, var_v_angle, vAngle);
+		get_entvar(id, var_origin, vPos);
+		get_entvar(id, var_v_angle, vAngle);
 
-	g_UserData[id][ud_IsStartSaved] = true;
-
-	g_UserData[id][ud_StartPos][cp_Pos] = vPos;
-	g_UserData[id][ud_StartPos][cp_Angle] = vAngle;
+		setStartPosition(id, vPos, vAngle);
+		kz_sql_save_start_pos(id, vPos, vAngle);
+	}
 
 	cmd_Fade(id);
 
@@ -924,6 +1014,20 @@ run_finish(id) {
 
 	UpdateHud(id);
 	ExecuteForward(g_Forwards[fwd_TimerFinishPost], _, id, PrepareArray(runInfo, RunStruct));
+}
+
+public bool:shouldBlockStartButton(id) {
+	if (!g_Cvars[cvarBlockStartSpam]) return false;
+
+	static Float:lastCall[MAX_PLAYERS + 1];
+
+	if (get_gametime() - lastCall[id] < MIN_TIME_BETWEEN_USE_CALLS) {
+		return true;
+	}
+
+	lastCall[id] = get_gametime();
+
+	return false;
 }
 
 public timer_handler() {
@@ -989,3 +1093,9 @@ public cmd_Fade(id) {
 	}
 }
 
+setStartPosition(id, Float:vOrigin[3], Float:vAngle[3]) {
+	g_UserData[id][ud_IsStartSaved] = true;
+
+	g_UserData[id][ud_StartPos][cp_Pos] = vOrigin;
+	g_UserData[id][ud_StartPos][cp_Angle] = vAngle;
+}
