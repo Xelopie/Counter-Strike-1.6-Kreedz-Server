@@ -1,0 +1,2 @@
+CREATE DATABASE kreedz;
+CREATE DATABASE uq_jumpstats;
