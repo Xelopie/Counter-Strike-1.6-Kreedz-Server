@@ -13,16 +13,18 @@ Everything in this repository comes from online. I do not own them or make them 
 * [Kreedz Mod](https://github.com/Theggv/Kreedz) built from commit `ecc1595`
 
 ## Download
-Just clone the repository
+* [Release](https://github.com/Xelopie/Counter-Strike-1.6-Kreedz-Server/releases)
+
+## Requirements
+* [Docker](https://www.docker.com/)
 
 ## Installation for MySQL database
-1. Make sure you have installed [Docker](https://www.docker.com/)
-2. Open CMD under the root directory of your local clone
-3. To start the database, run `docker compose -f up -d --build`
-4. To stop the database, run `docker compose down`
+1. Open Command Prompt/Powershell, navigate to the root directory of your server folder
+2. To start the database, run `docker compose up -d --build`
+3. To stop the database, run `docker compose down`
 
 ## Installation for MySQL database (with VS Code)
-1. Open the folder of your clone using VS Code
+1. Open your server folder using VS Code
 2. Make sure you have installed the [Docker extension](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.vscode-docker)
 3. To start the database, run `Docker: Compose Up` in Command Palette
 4. To stop the database, run `Docker: Compose Down` in Command Palette
